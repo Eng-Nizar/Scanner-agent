@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ stock.symbol }} - US Stock Scanner</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: #0a0e27;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .navbar {
+            background: #1a2332 !important;
+            border-bottom: 2px solid #2d3748;
+        }
+        
+        .card {
+            background: #1a2332;
+            border: 1px solid #2d3748;
+        }
+        
+        .score-badge {
+            font-weight: bold;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        
+        .score-high {
+            background: #00d084;
+            color: #000;
+        }
+        
+        .metric-box {
+            background: #2d3748;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark">
+        <div class="container-fluid">
+            <a href="/" class="navbar-brand">← Back to Dashboard</a>
+            <span class="text-muted">{{ stock.symbol }}</span>
+        </div>
+    </nav>
+
+    <div class="container-fluid p-4">
+        
+        <!-- Header -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h2>{{ stock.symbol }}</h2>
+                        <p class="text-muted">{{ stock.company_name }}</p>
+                        <p><strong>Sector:</strong> {{ stock.sector }}</p>
+                        <p><strong>Exchange:</strong> {{ stock.exchange }}</p>
+                    </div>
+                    <div class="col-md-6 text-end">
+                        <h4 style="color: #00d084;">${{ stock.current_price|round(2) }}</h4>
+                        <p class="text-muted">Market Cap: ${{ (stock.market_cap/1e9)|round(2) }}B</p>
+                        <div class="score-badge score-high">{{ stock.total_score|round(1) }}/14</div>
+                        <p style="margin-top: 10px;">{{ stock.rating }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 7-Reason Scores -->
+        <div class="card mb-4">
+            <div class="card-header bg-dark">
+                <h5 class="mb-0">7-Reason Framework Scores</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="metric-box">
+                            <strong>1. Gov Contracts</strong>
+                            <div class="progress">
+                                <div class="progress-bar bg-success" style="width: {{ (stock.gov_contracts_score/2)*100 }}%"></div>
+                            </div>
+                            {{ stock.gov_contracts_score|round(1) }}/2
+                        </div>
+                        
+                        <div class="metric-box">
+                            <strong>2. National Security</strong>
+                            <div class="progress">
+                                <div class="progress-bar bg-success" style="width: {{ (stock.national_security_score/2)*100 }}%"></div>
+                            </div>
+                            {{ stock.national_security_score|round(1) }}/2
+                        </div>
+                        
+                        <div class="metric-box">
+                            <strong>3. Large Backlog</strong>
+                            <div class="progress">
+                                <div class="progress-bar bg-success" style="width: {{ (stock.backlog_score/2)*100 }}%"></div>
+                            </div>
+                            {{ stock.backlog_score|round(1) }}/2
+                        </div>
+                        
+                        <div class="metric-box">
+                            <strong>4. Revenue Growth</strong>
+                            <div class="progress">
+                                <div class="progress-bar bg-success" style="width: {{ (stock.revenue_growth_score/2)*100 }}%"></div>
+                            </div>
+                            {{ stock.revenue_growth_score|round(1) }}/2
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="metric-box">
+                            <strong>5. Profitability</strong>
+                            <div class="progress">
+                                <div class="progress-bar bg-success" style="width: {{ (stock.profitability_score/2)*100 }}%"></div>
+                            </div>
+                            {{ stock.profitability_score|round(1) }}/2
+                        </div>
+                        
+                        <div class="metric-box">
+                            <strong>6. Industry Tailwinds</strong>
+                            <div class="progress">
+                                <div class="progress-bar bg-success" style="width: {{ (stock.industry_tailwinds_score/2)*100 }}%"></div>
+                            </div>
+                            {{ stock.industry_tailwinds_score|round(1) }}/2
+                        </div>
+                        
+                        <div class="metric-box">
+                            <strong>7. Execution Excellence</strong>
+                            <div class="progress">
+                                <div class="progress-bar bg-success" style="width: {{ (stock.execution_score/2)*100 }}%"></div>
+                            </div>
+                            {{ stock.execution_score|round(1) }}/2
+                        </div>
+                        
+                        <div class="metric-box" style="background: #00d084; color: #000;">
+                            <strong>TOTAL SCORE</strong>
+                            <h4 style="color: #000; margin-top: 10px;">{{ stock.total_score|round(1) }}/14</h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Financial Metrics -->
+        <div class="card mb-4">
+            <div class="card-header bg-dark">
+                <h5 class="mb-0">Financial Metrics</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <p><strong>P/E Ratio:</strong></p>
+                        <p style="color: #00d084;">{{ stock.pe_ratio|round(2) if stock.pe_ratio else 'N/A' }}</p>
+                    </div>
+                    <div class="col-md-3">
+                        <p><strong>Price/Sales:</strong></p>
+                        <p style="color: #00d084;">{{ stock.price_to_sales|round(2) if stock.price_to_sales else 'N/A' }}</p>
+                    </div>
+                    <div class="col-md-3">
+                        <p><strong>Gross Margin:</strong></p>
+                        <p style="color: #00d084;">{{ (stock.gross_margin*100)|round(1) if stock.gross_margin else 'N/A' }}%</p>
+                    </div>
+                    <div class="col-md-3">
+                        <p><strong>Net Margin:</strong></p>
+                        <p style="color: #00d084;">{{ (stock.net_margin*100)|round(1) if stock.net_margin else 'N/A' }}%</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alerts -->
+        {% if alerts %}
+        <div class="card">
+            <div class="card-header bg-dark">
+                <h5 class="mb-0">🚨 Recent Alerts</h5>
+            </div>
+            <div class="card-body p-0">
+                {% for alert in alerts %}
+                <div style="padding: 15px; border-bottom: 1px solid #2d3748;">
+                    <p class="mb-1"><strong>{{ alert.alert_type }}</strong></p>
+                    <p class="text-muted mb-1">{{ alert.message }}</p>
+                    <small class="text-muted">{{ alert.triggered_at.strftime('%Y-%m-%d %H:%M') }}</small>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
