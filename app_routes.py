@@ -3,11 +3,12 @@ Flask Routes for US Stock Scanner Dashboard
 """
 
 from flask import Blueprint, render_template, jsonify, request
-from app.models import USStock, USAlert, ScanRun, db
+from app_models import USStock, USAlert, ScanRun, db
 from sqlalchemy import desc
 from config import Config
 
 main_bp = Blueprint('main', __name__)
+api_bp = Blueprint('api', __name__, url_prefix='/api')
 
 @main_bp.route('/')
 def us_dashboard():
@@ -62,7 +63,7 @@ def stock_detail(symbol):
     )
 
 
-@main_bp.route('/api/stocks')
+@api_bp.route('/stocks')
 def get_stocks_api():
     """
     API Endpoint - Get stocks data
@@ -116,7 +117,7 @@ def get_stocks_api():
     } for s in stocks])
 
 
-@main_bp.route('/api/scan-history')
+@api_bp.route('/scan-history')
 def scan_history_api():
     """
     API Endpoint - Scan history
@@ -138,7 +139,7 @@ def scan_history_api():
     } for h in history])
 
 
-@main_bp.route('/api/stats')
+@api_bp.route('/stats')
 def get_stats_api():
     """
     API Endpoint - Current statistics
