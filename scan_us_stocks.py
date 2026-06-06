@@ -1,232 +1,149 @@
+#!/usr/bin/env python
 """
-US Stock Scanner - Main Scanning Script
-Scans 3,000+ US stocks for 7-reason matches
+US Stock Scanner - Main scanning script
+Scans US stocks and saves results to database
 """
 
-import yfinance as yf
-import pandas as pd
-from datetime import datetime
-from app import create_app, db
-from app.models import USStock, USAlert, ScanRun
-from scanners.us_scorer import USStockScorer
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from main import app, db
+from app_models import USStock, USAlert, ScanRun
+from us_scorer import USStockScorer
 from config import Config
-from concurrent.futures import ThreadPoolExecutor
-import time
+import yfinance as yf
+from datetime import datetime
+import logging
 
-def get_us_stocks():
-    """Get all US-listed stocks"""
-    
-    print("Loading US stock list...")
-    
-    # Start with common stocks
-    stocks = get_popular_us_stocks()
-    
-    # Try to add NASDAQ stocks
-    try:
-        nasdaq = pd.read_csv(
-            'https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt',
-            sep='|',
-            timeout=10
-        )
-        nasdaq_stocks = nasdaq['Symbol'].dropna().tolist()
-        stocks.extend(nasdaq_stocks)
-        print(f"  Added {len(nasdaq_stocks)} NASDAQ stocks")
-    except Exception as e:
-        print(f"  Could not load NASDAQ list: {e}")
-    
-    # Remove duplicates and invalid symbols
-    stocks = list(set(stocks))
-    stocks = [s.strip().upper() for s in stocks if s and len(s) <= 5]
-    
-    print(f"Total US stocks to scan: {len(stocks)}")
-    return stocks
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-
-def get_popular_us_stocks():
-    """Popular and major US stocks to always include"""
+class StockScanner:
+    def __init__(self):
+        self.scorer = USStockScorer()
+        self.stocks_processed = 0
+        self.high_score_stocks = 0
+        self.cheap_gems = 0
+        
+    def get_stock_list(self):
+        """Get list of popular US stocks to scan"""
+        stocks = [
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'BRK.B', 'JNJ', 'V',
+            'WMT', 'PG', 'XOM', 'MA', 'HD', 'COST', 'MCD', 'ABBV', 'LLY', 'KO',
+            'PEP', 'AVGO', 'CRM', 'AMD', 'NFLX', 'ACN', 'TXN', 'QCOM', 'MU', 'IBM',
+            'INTC', 'CSCO', 'ORCL', 'ADBE', 'GILD', 'AMAT', 'CRWD', 'SNOW', 'NOW', 'PANW',
+            'NET', 'DDOG', 'MDB', 'COIN', 'RBLX', 'DASH', 'UPST', 'U', 'RIOT', 'MSTR',
+            'KTOS', 'TENB', 'BBAI', 'RKLB', 'ELDN', 'LCID', 'PLTR', 'F', 'GM', 'RIVN',
+            'PCAR', 'DE', 'CAT', 'MMM', 'BA', 'RTX', 'LMT', 'GD', 'NOC', 'HII',
+            'LDOS', 'AVAV', 'LHX', 'VSAT', 'MAXR', 'AERI', 'SAIC', 'CACI', 'EACL', 'MARA'
+        ]
+        return stocks
     
-    return [
-        # Your three main stocks
-        'BBAI', 'TENB', 'KTOS',
-        
-        # Other defense/AI stocks
-        'PLTR', 'RKLB', 'LDOS', 'AVAV', 'LHX', 'CRWD',
-        'RTX', 'BA', 'NOC', 'GD', 'TDG',
-        
-        # Major tech
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA',
-        'INTC', 'AMD', 'QCOM', 'CSCO',
-        
-        # Cybersecurity
-        'PALO', 'OKTA', 'NET', 'PANW', 'CHKP',
-        
-        # Defense contractors
-        'APH', 'TECH', 'HII', 'PSA',
-        
-        # Space & Satellites
-        'MAXR', 'SSTI', 'IRDM',
-        
-        # Add more as needed...
-    ]
-
-
-def run_us_stock_scan():
-    """Main scanning function"""
-    
-    app = create_app()
-    
-    with app.app_context():
-        print(f"\n{'='*70}")
-        print(f"  🇺🇸 US STOCK SCANNER - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"{'='*70}\n")
-        
-        start_time = time.time()
-        scorer = USStockScorer()
-        
-        # Get stocks to scan
-        us_stocks = get_us_stocks()
-        
-        # Statistics
-        scanned_count = 0
-        high_score_count = 0
-        cheap_gems = 0
-        failed_count = 0
-        high_score_stocks = []
-        cheap_high_score = []
-        
-        print(f"Scanning {len(us_stocks)} US stocks with parallel processing...\n")
-        
-        # Scan in parallel (50 at a time)
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            futures = {
-                executor.submit(scorer.score_stock, symbol): symbol
-                for symbol in us_stocks
-            }
+    def scan_single_stock(self, symbol):
+        """Scan a single stock"""
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
             
-            completed = 0
-            for future in futures:
-                symbol = futures[future]
-                completed += 1
-                
-                # Progress indicator
-                if completed % 100 == 0:
-                    print(f"Progress: {completed}/{len(us_stocks)} stocks processed...")
-                
-                try:
-                    scores = future.result(timeout=10)
-                    
-                    if scores is None:
-                        failed_count += 1
-                        continue
-                    
-                    scanned_count += 1
-                    
-                    # Get or create stock in database
-                    stock = USStock.query.filter_by(symbol=symbol).first()
-                    
-                    if not stock:
-                        stock = USStock(symbol=symbol)
-                        db.session.add(stock)
-                    
-                    # Update all fields
-                    stock.company_name = scores.get('company_name', symbol)
-                    stock.exchange = scores.get('exchange', 'UNKNOWN')
-                    stock.sector = scores.get('sector', '')
-                    stock.industry = scores.get('industry', '')
-                    stock.current_price = scores.get('current_price', 0)
-                    stock.market_cap = scores.get('market_cap', 0)
-                    
-                    # 7-Reason Scores
-                    stock.gov_contracts_score = scores.get('gov_contracts', 0)
-                    stock.national_security_score = scores.get('national_security', 0)
-                    stock.backlog_score = scores.get('backlog', 0)
-                    stock.revenue_growth_score = scores.get('revenue_growth', 0)
-                    stock.profitability_score = scores.get('profitability', 0)
-                    stock.industry_tailwinds_score = scores.get('industry_tailwinds', 0)
-                    stock.execution_score = scores.get('execution', 0)
-                    stock.total_score = scores.get('total', 0)
-                    stock.rating = scores.get('rating', 'AVOID')
-                    
-                    # Metrics
-                    stock.pe_ratio = scores.get('pe_ratio', 0)
-                    stock.price_to_sales = scores.get('price_to_sales', 0)
-                    stock.last_scanned = datetime.utcnow()
-                    
-                    db.session.commit()
-                    
-                    # Track for alerts
-                    if scores.get('total', 0) >= 5:
-                        high_score_count += 1
-                        high_score_stocks.append({
-                            'symbol': symbol,
-                            'price': scores.get('current_price', 0),
-                            'score': scores.get('total', 0),
-                            'rating': scores.get('rating', '')
-                        })
-                        
-                        # Check if cheap gem
-                        price = scores.get('current_price', 0)
-                        if price > 0 and price < 20:
-                            cheap_gems += 1
-                            cheap_high_score.append({
-                                'symbol': symbol,
-                                'price': price,
-                                'score': scores.get('total', 0)
-                            })
-                            print(f"💎 {symbol} @ ${price:.2f} - {scores.get('total', 0)}/14")
-                    
-                except Exception as e:
-                    failed_count += 1
-                    continue
+            if not info or 'currentPrice' not in info:
+                return None
+            
+            stock = USStock.query.filter_by(symbol=symbol).first()
+            if not stock:
+                stock = USStock(
+                    symbol=symbol,
+                    company_name=info.get('longName', symbol),
+                    exchange=info.get('exchange', 'NASDAQ'),
+                    current_price=0
+                )
+                db.session.add(stock)
+            
+            stock.current_price = info.get('currentPrice', 0) or info.get('bid', 0) or 0
+            stock.company_name = info.get('longName', symbol)
+            stock.exchange = info.get('exchange', 'NASDAQ')
+            stock.sector = info.get('sector', '')
+            stock.industry = info.get('industry', '')
+            stock.market_cap = info.get('marketCap', 0)
+            stock.pe_ratio = info.get('trailingPE', 0)
+            stock.gross_margin = info.get('grossMargins', 0)
+            stock.net_margin = info.get('profitMargins', 0)
+            stock.revenue_ttm = info.get('totalRevenue', 0)
+            stock.fifty_two_week_high = info.get('fiftyTwoWeekHigh', 0)
+            stock.fifty_two_week_low = info.get('fiftyTwoWeekLow', 0)
+            
+            scores = self.scorer.score_stock(symbol, info)
+            stock.total_score = scores.get('total_score', 0)
+            stock.rating = self.scorer.get_rating(stock.total_score)
+            stock.gov_contracts_score = scores.get('gov_contracts_score', 0)
+            stock.national_security_score = scores.get('national_security_score', 0)
+            stock.revenue_growth_score = scores.get('revenue_growth_score', 0)
+            stock.profitability_score = scores.get('profitability_score', 0)
+            stock.last_scanned = datetime.utcnow()
+            
+            db.session.commit()
+            
+            if stock.total_score >= 10:
+                self.high_score_stocks += 1
+            if stock.current_price < 20 and stock.total_score >= 7:
+                self.cheap_gems += 1
+            
+            logger.info(f"✓ {symbol:6} - Score: {stock.total_score:5.1f}/14 - ${stock.current_price:8.2f} - {stock.rating}")
+            return stock
+            
+        except Exception as e:
+            logger.warning(f"✗ {symbol}: {str(e)[:50]}")
+            return None
+    
+    def run_scan(self):
+        """Run the full stock scan"""
+        logger.info("=" * 70)
+        logger.info("🚀 STARTING US STOCK SCANNER")
+        logger.info("=" * 70)
         
-        # Save scan history
-        avg_score = sum(s['score'] for s in high_score_stocks) / len(high_score_stocks) if high_score_stocks else 0
-        top_score = max((s['score'] for s in high_score_stocks), default=0)
-        
-        scan_run = ScanRun(
-            stocks_scanned=scanned_count,
-            high_score_stocks=high_score_count,
-            cheap_gems_found=cheap_gems,
-            avg_score=avg_score,
-            top_score=top_score,
-            status='success' if failed_count == 0 else 'partial',
-            scan_duration_seconds=int(time.time() - start_time)
-        )
-        db.session.add(scan_run)
-        db.session.commit()
-        
-        # Print Summary
-        elapsed = time.time() - start_time
-        
-        print(f"\n{'='*70}")
-        print(f"  📊 SCAN COMPLETED SUCCESSFULLY")
-        print(f"{'='*70}")
-        print(f"US Stocks Scanned: {scanned_count}")
-        print(f"High Score (≥5): {high_score_count}")
-        print(f"💎 Cheap Gems (<$20): {cheap_gems}")
-        print(f"Failed: {failed_count}")
-        print(f"Average Score: {avg_score:.2f}/14")
-        print(f"Top Score: {top_score}/14")
-        print(f"Duration: {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
-        print(f"{'='*70}\n")
-        
-        # Top 10 stocks
-        print("🚀 TOP 10 HIGHEST SCORES:")
-        print(f"{'='*70}")
-        top_10 = sorted(high_score_stocks, key=lambda x: x['score'], reverse=True)[:10]
-        for i, stock in enumerate(top_10, 1):
-            print(f"{i:2}. {stock['symbol']:8} ${stock['price']:7.2f}  Score: {stock['score']:5.1f}/14  {stock['rating']}")
-        
-        # Cheap gems
-        if cheap_high_score:
-            print(f"\n💎 CHEAPEST HIGH-QUALITY STOCKS (<$20, Score ≥7):")
-            print(f"{'='*70}")
-            cheap_sorted = sorted(cheap_high_score, key=lambda x: x['price'])
-            for i, stock in enumerate(cheap_sorted[:10], 1):
-                print(f"{i:2}. {stock['symbol']:8} ${stock['price']:7.2f}  Score: {stock['score']:5.1f}/14  ⭐ VALUE PLAY")
-        
-        print(f"\n{'='*70}\n")
-
+        with app.app_context():
+            scan_run = ScanRun(status='running')
+            db.session.add(scan_run)
+            db.session.commit()
+            
+            start_time = datetime.utcnow()
+            
+            stocks = self.get_stock_list()
+            logger.info(f"\n📊 Scanning {len(stocks)} stocks...")
+            logger.info("=" * 70)
+            
+            for symbol in stocks:
+                self.scan_single_stock(symbol)
+                self.stocks_processed += 1
+            
+            duration = (datetime.utcnow() - start_time).total_seconds()
+            
+            scan_run.stocks_scanned = self.stocks_processed
+            scan_run.high_score_stocks = self.high_score_stocks
+            scan_run.cheap_gems_found = self.cheap_gems
+            scan_run.status = 'completed'
+            scan_run.scan_duration_seconds = int(duration)
+            
+            avg_score = db.session.query(db.func.avg(USStock.total_score)).scalar() or 0
+            top_score = db.session.query(db.func.max(USStock.total_score)).scalar() or 0
+            
+            scan_run.avg_score = round(avg_score, 2)
+            scan_run.top_score = round(top_score, 2)
+            
+            db.session.commit()
+            
+            logger.info("\n" + "=" * 70)
+            logger.info("✅ SCAN COMPLETE!")
+            logger.info("=" * 70)
+            logger.info(f"📈 Stocks scanned:      {self.stocks_processed}")
+            logger.info(f"⭐ High-score (≥10):    {self.high_score_stocks}")
+            logger.info(f"💎 Cheap gems (<$20):   {self.cheap_gems}")
+            logger.info(f"📊 Average score:       {avg_score:.2f}/14")
+            logger.info(f"🏆 Top score:           {top_score:.1f}/14")
+            logger.info(f"⏱️  Duration:            {duration:.0f} seconds")
+            logger.info("=" * 70)
+            logger.info("\n✨ Dashboard updated! Visit your Scanner-agent URL to see results!")
 
 if __name__ == '__main__':
-    run_us_stock_scan()
+    scanner = StockScanner()
+    scanner.run_scan()
