@@ -12,13 +12,13 @@ def create_app():
     
     db.init_app(app)
     
+    # Import and register blueprints BEFORE app context
+    from app_routes import main_bp, api_bp
+    app.register_blueprint(main_bp)
+    app.register_blueprint(api_bp)
+    
     with app.app_context():
         db.create_all()
-        
-        # Import and register blueprints
-        from app_routes import main_bp, api_bp
-        app.register_blueprint(main_bp)
-        app.register_blueprint(api_bp)
     
     return app
 
