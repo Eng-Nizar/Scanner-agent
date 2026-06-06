@@ -1,15 +1,16 @@
 import os
 from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
 from config import Config
 from apscheduler.schedulers.background import BackgroundScheduler
 
-db = SQLAlchemy()
+# Import db from app_models - DON'T create a new one!
+from app_models import db
 
 def create_app():
     app = Flask(__name__, template_folder='.')
     app.config.from_object(Config)
     
+    # Initialize the existing db instance with the app
     db.init_app(app)
     
     # Import and register blueprints BEFORE app context
