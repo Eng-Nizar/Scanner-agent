@@ -7,7 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 db = SQLAlchemy()
 
 def create_app():
-    app = Flask(__name__)
+    app = Flask(__name__, template_folder='.')
     app.config.from_object(Config)
     
     db.init_app(app)
