@@ -1,10 +1,9 @@
 """
-US Stock Scorer - Ultra-Simple Version
-Keyword-focused scoring that always works
-No dependencies on yfinance full data
+US Stock Scorer - Finnhub ONLY
+No yfinance dependency - uses only Finnhub API
+Scores based on keywords + Finnhub data
 """
 
-import yfinance as yf
 import requests
 import os
 import time
@@ -31,7 +30,7 @@ except ImportError:
 load_dotenv()
 
 class USStockScorer:
-    """Score US stocks - Simple keyword-based approach"""
+    """Score US stocks using FINNHUB ONLY"""
     
     def __init__(self):
         self.finnhub_key = os.environ.get('FINNHUB_KEY', '')
@@ -45,33 +44,40 @@ class USStockScorer:
         
         self.min_delay = 0.05
         
-        print(f"✅ Scorer initialized for: {self.sector_name}")
+        if not self.finnhub_key:
+            print("⚠️  WARNING: FINNHUB_KEY not found!")
+        else:
+            print(f"✅ Scorer initialized for: {self.sector_name}")
     
     def score_stock(self, symbol):
         """
-        Score a US stock (0-14 scale)
-        Simple, keyword-focused, ALWAYS returns a dict
+        Score using FINNHUB data only
+        ALWAYS returns a dict with scores
         """
         
         try:
             time.sleep(self.min_delay)
             
-            # Get minimal info from yfinance
-            info = self._get_minimal_info(symbol)
+            # Get company profile from Finnhub (MAIN DATA SOURCE)
+            profile = self._get_company_profile(symbol)
             
-            # Try Finnhub data (optional)
-            finnhub_data = self._get_finnhub_data_safe(symbol)
+            if not profile:
+                # Return minimal score if no data
+                return self._create_fallback_score(symbol)
+            
+            # Get metrics from Finnhub
+            metrics = self._get_financial_metrics(symbol)
             
             scores = {}
             
             # Score on 7 reasons
-            scores['sector_focus'] = self._score_sector_focus(symbol, info, finnhub_data)
-            scores['industry_match'] = self._score_industry_match(symbol, info, finnhub_data)
-            scores['keyword_strength'] = self._score_keyword_strength(symbol, info, finnhub_data)
-            scores['tailwind'] = self._score_tailwind(symbol, info, finnhub_data)
-            scores['growth_potential'] = self._score_growth_potential(info, finnhub_data)
-            scores['profitability'] = self._score_profitability(info, finnhub_data)
-            scores['execution'] = self._score_execution_simple(symbol)
+            scores['sector_focus'] = self._score_sector_focus(symbol, profile)
+            scores['industry_match'] = self._score_industry_match(symbol, profile)
+            scores['keyword_strength'] = self._score_keyword_strength(symbol, profile)
+            scores['tailwind'] = self._score_tailwind(symbol, profile)
+            scores['growth_potential'] = self._score_growth_potential(metrics)
+            scores['profitability'] = self._score_profitability(metrics)
+            scores['execution'] = self._score_execution(profile)
             
             # Calculate totals
             total_score = sum(scores.values())
@@ -80,99 +86,69 @@ class USStockScorer:
             
             # Add metrics
             scores['symbol'] = symbol
-            scores['company_name'] = info.get('longName', symbol)
-            scores['exchange'] = info.get('exchange', 'UNKNOWN')
-            scores['sector'] = info.get('sector', '')
-            scores['industry'] = info.get('industry', '')
-            scores['current_price'] = info.get('currentPrice', 0)
-            scores['market_cap'] = info.get('marketCap', 0)
-            scores['pe_ratio'] = info.get('trailingPE', 0)
+            scores['company_name'] = profile.get('name', symbol)
+            scores['exchange'] = profile.get('exchange', 'UNKNOWN')
+            scores['sector'] = profile.get('sector', '')
+            scores['industry'] = profile.get('industry', '')
+            scores['current_price'] = profile.get('lastPrice', 0)
+            scores['market_cap'] = profile.get('marketCapitalization', 0)
+            scores['pe_ratio'] = profile.get('pe', 0)
             
             return scores
             
         except Exception as e:
-            # Fallback: Return basic score
+            print(f"Error scoring {symbol}: {e}")
             return self._create_fallback_score(symbol)
     
-    def _get_minimal_info(self, symbol):
-        """Get MINIMAL info from yfinance (just basics)"""
+    def _get_company_profile(self, symbol):
+        """Get company profile from Finnhub"""
         
         try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
+            url = f"{self.finnhub_base}/stock/profile2"
+            params = {'symbol': symbol, 'token': self.finnhub_key}
             
-            # Check if we got SOME data (even if incomplete)
-            if info:
-                return {
-                    'longName': info.get('longName', symbol),
-                    'sector': info.get('sector', ''),
-                    'industry': info.get('industry', ''),
-                    'longBusinessSummary': info.get('longBusinessSummary', ''),
-                    'currentPrice': info.get('currentPrice', 0),
-                    'marketCap': info.get('marketCap', 0),
-                    'trailingPE': info.get('trailingPE', 0),
-                    'revenueGrowth': info.get('revenueGrowth', 0),
-                    'exchange': info.get('exchange', 'UNKNOWN')
-                }
-            else:
-                return self._create_empty_info(symbol)
-                
+            resp = requests.get(url, params=params, timeout=3)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                if data and len(data) > 0:
+                    return data
+            
+            return None
         except Exception as e:
-            print(f"  ⚠️  {symbol}: Could not get full data")
-            return self._create_empty_info(symbol)
+            return None
     
-    def _create_empty_info(self, symbol):
-        """Create empty info dict"""
-        return {
-            'longName': symbol,
-            'sector': '',
-            'industry': '',
-            'longBusinessSummary': '',
-            'currentPrice': 0,
-            'marketCap': 0,
-            'trailingPE': 0,
-            'revenueGrowth': 0,
-            'exchange': 'UNKNOWN'
-        }
-    
-    def _get_finnhub_data_safe(self, symbol):
-        """Get Finnhub data optionally"""
+    def _get_financial_metrics(self, symbol):
+        """Get financial metrics from Finnhub"""
         
         try:
-            if not self.finnhub_key:
-                return {}
+            url = f"{self.finnhub_base}/stock/metric"
+            params = {
+                'symbol': symbol,
+                'metric': 'all',
+                'token': self.finnhub_key
+            }
             
-            profile = {}
+            resp = requests.get(url, params=params, timeout=3)
             
-            try:
-                url = f"{self.finnhub_base}/stock/profile2"
-                params = {'symbol': symbol, 'token': self.finnhub_key}
-                resp = requests.get(url, params=params, timeout=2)
-                
-                if resp.status_code == 200:
-                    profile = resp.json() or {}
-            except:
-                pass
+            if resp.status_code == 200:
+                data = resp.json()
+                if 'metric' in data:
+                    return data['metric']
             
-            return {'profile': profile}
-        
+            return {}
         except:
             return {}
     
-    def _score_sector_focus(self, symbol, info, finnhub_data):
-        """Score 1: Sector Focus - PRIMARY (0-3)"""
+    def _score_sector_focus(self, symbol, profile):
+        """Score 1: Sector Focus (0-3)"""
         
-        score = 0.5  # Minimum baseline
+        score = 0.5
         
         try:
             # Get description
-            description = (info.get('longBusinessSummary', '') or '').lower()
-            
-            if finnhub_data and 'profile' in finnhub_data:
-                profile = finnhub_data['profile']
-                description += ' ' + (profile.get('description', '') or '').lower()
-            
-            name = (info.get('longName', '') or '').lower()
+            description = (profile.get('description', '') or '').lower()
+            name = (profile.get('name', '') or '').lower()
             
             # Count keyword matches
             keyword_count = sum(1 for kw in self.primary_keywords 
@@ -184,13 +160,13 @@ class USStockScorer:
                 score = 2.5
             elif keyword_count >= 1:
                 score = 1.5
+            else:
+                score = 0.5
             
-            # Boost for sector
-            sector = (info.get('sector', '') or '').lower()
-            industry = (info.get('industry', '') or '').lower()
+            # Check sector
+            sector = (profile.get('sector', '') or '').lower()
             
-            sector_match = any(ind.lower() in sector or ind.lower() in industry 
-                             for ind in self.industry_keywords)
+            sector_match = any(ind.lower() in sector for ind in self.industry_keywords)
             
             if sector_match:
                 score = min(score + 0.5, 3.0)
@@ -199,15 +175,14 @@ class USStockScorer:
         except:
             return 0.5
     
-    def _score_industry_match(self, symbol, info, finnhub_data):
+    def _score_industry_match(self, symbol, profile):
         """Score 2: Industry Match (0-3)"""
         
         score = 0
         
         try:
-            industry = (info.get('industry', '') or '').lower()
-            sector = (info.get('sector', '') or '').lower()
-            description = (info.get('longBusinessSummary', '') or '').lower()
+            industry = (profile.get('industry', '') or '').lower()
+            description = (profile.get('description', '') or '').lower()
             
             # Check industry keywords
             industry_matches = sum(1 for ind in self.industry_keywords 
@@ -219,21 +194,19 @@ class USStockScorer:
                 score = 2.5
             elif industry_matches >= 1:
                 score = 2.0
-            elif sector in ['technology', 'industrials', 'healthcare']:
-                score = 1.0
             
             return score
         except:
             return 0
     
-    def _score_keyword_strength(self, symbol, info, finnhub_data):
+    def _score_keyword_strength(self, symbol, profile):
         """Score 3: Keyword Strength (0-2)"""
         
         score = 0
         
         try:
-            description = (info.get('longBusinessSummary', '') or '').lower()
-            name = (info.get('longName', '') or '').lower()
+            description = (profile.get('description', '') or '').lower()
+            name = (profile.get('name', '') or '').lower()
             
             all_text = description + ' ' + name
             
@@ -252,14 +225,14 @@ class USStockScorer:
         except:
             return 0
     
-    def _score_tailwind(self, symbol, info, finnhub_data):
+    def _score_tailwind(self, symbol, profile):
         """Score 4: Industry Tailwinds (0-2)"""
         
         score = 0
         
         try:
-            industry = (info.get('industry', '') or '').lower()
-            description = (info.get('longBusinessSummary', '') or '').lower()
+            industry = (profile.get('industry', '') or '').lower()
+            description = (profile.get('description', '') or '').lower()
             
             # Count tailwind matches
             tailwind_matches = sum(1 for d in self.tailwind_keywords 
@@ -276,14 +249,16 @@ class USStockScorer:
         except:
             return 0
     
-    def _score_growth_potential(self, info, finnhub_data):
+    def _score_growth_potential(self, metrics):
         """Score 5: Growth Potential (0-2)"""
         
         score = 0
         
         try:
-            # Check revenue growth
-            revenue_growth = info.get('revenueGrowth', 0)
+            if not metrics:
+                return 0
+            
+            revenue_growth = metrics.get('revenueGrowth5Y', 0) or metrics.get('revenueGrowth', 0)
             
             if revenue_growth and revenue_growth >= 0.25:
                 score = 2.0
@@ -296,42 +271,51 @@ class USStockScorer:
         except:
             return 0
     
-    def _score_profitability(self, info, finnhub_data):
+    def _score_profitability(self, metrics):
         """Score 6: Profitability (0-1.5)"""
         
         score = 0
         
         try:
-            pe_ratio = info.get('trailingPE', 0)
+            if not metrics:
+                return 0
             
-            if pe_ratio and pe_ratio > 0:
-                if pe_ratio < 20:
+            # Try net margin
+            net_margin = metrics.get('netMargin', 0) or metrics.get('profitMargin', 0)
+            
+            if net_margin and net_margin > 0:
+                if net_margin > 0.12:
                     score = 1.5
-                elif pe_ratio < 30:
+                elif net_margin > 0.08:
+                    score = 1.2
+                elif net_margin > 0.03:
+                    score = 0.8
+                elif net_margin > 0:
+                    score = 0.4
+            
+            # Try ROA
+            if score == 0:
+                roa = metrics.get('roa', 0)
+                if roa and roa > 0.05:
                     score = 1.0
-                elif pe_ratio < 50:
-                    score = 0.5
             
             return score
         except:
             return 0
     
-    def _score_execution_simple(self, symbol):
-        """Score 7: Execution (0-1.0) - SIMPLE"""
+    def _score_execution(self, profile):
+        """Score 7: Execution (0-1.0)"""
         
         score = 0
         
         try:
-            # Just check if stock exists and has a price
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
+            # Check if company exists and has market cap
+            market_cap = profile.get('marketCapitalization', 0)
             
-            if info and info.get('currentPrice') and info.get('currentPrice') > 0:
-                score = 0.5  # Existing + trading = baseline
+            if market_cap and market_cap > 0:
+                score = 0.5
                 
-                # Try to get market cap as size indicator
-                market_cap = info.get('marketCap', 0)
-                if market_cap > 1_000_000_000:  # >$1B
+                if market_cap > 1_000_000_000:  # > $1B
                     score = 1.0
             
             return score
@@ -339,7 +323,7 @@ class USStockScorer:
             return 0
     
     def _create_fallback_score(self, symbol):
-        """Create fallback score when everything fails"""
+        """Create fallback score"""
         return {
             'symbol': symbol,
             'total_score': 0.5,
