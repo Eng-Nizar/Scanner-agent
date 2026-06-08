@@ -1,11 +1,11 @@
 """
-US Stock Scorer - Finnhub Integration
-Scores US stocks using Finnhub API for real financial data
-Defense-focused: Government contracts, national security
+US Stock Scorer - Hybrid Approach
+Uses Finnhub for detailed data, falls back to yfinance + defense keywords
+Designed to work reliably with available data
 """
 
-import requests
 import yfinance as yf
+import requests
 from config import Config
 import os
 from dotenv import load_dotenv
@@ -13,46 +13,41 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class USStockScorer:
-    """Score US stocks using Finnhub API for fundamentals"""
+    """Score US stocks - Hybrid Finnhub + yfinance approach"""
     
     def __init__(self):
         self.finnhub_key = os.environ.get('FINNHUB_KEY', '')
         self.finnhub_base = "https://finnhub.io/api/v1"
         self.defense_keywords = Config.US_DEFENSE_KEYWORDS
-        
-        if not self.finnhub_key:
-            print("⚠️  WARNING: FINNHUB_KEY not found in environment")
     
     def score_stock(self, symbol):
         """
-        Score a US stock using Finnhub data (0-14 scale)
-        Returns dict with all scores and metrics
+        Score a US stock (0-14 scale)
+        Uses: Finnhub data + yfinance + defense keywords
         """
         
         try:
-            # Get company profile from Finnhub
-            profile = self._get_company_profile(symbol)
-            if not profile:
+            # Get basic price info from yfinance (ALWAYS works)
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+            
+            if not info or 'currentPrice' not in info:
                 return None
             
-            # Get financial metrics from Finnhub
-            metrics = self._get_financial_metrics(symbol)
-            
-            # Get current price from yfinance (fast & reliable)
-            price_info = self._get_price_info(symbol)
-            if not price_info:
-                return None
+            # Try to get Finnhub data (may fail, but OK if it does)
+            finnhub_data = self._get_finnhub_data(symbol)
             
             scores = {}
             
             # Score on 7 reasons with DEFENSE OPTIMIZATION
-            scores['gov_contracts'] = self._score_gov_contracts(symbol, profile)
-            scores['national_security'] = self._score_national_security(symbol, profile)
-            scores['backlog'] = self._score_backlog(metrics, profile)
-            scores['revenue_growth'] = self._score_revenue_growth(metrics)
-            scores['profitability'] = self._score_profitability(metrics)
-            scores['industry_tailwinds'] = self._score_industry_tailwinds(symbol, profile)
-            scores['execution'] = self._score_execution(symbol)
+            # These are DESIGNED to work even with limited data
+            scores['gov_contracts'] = self._score_gov_contracts(symbol, info, finnhub_data)
+            scores['national_security'] = self._score_national_security(symbol, info, finnhub_data)
+            scores['backlog'] = self._score_backlog(info, finnhub_data)
+            scores['revenue_growth'] = self._score_revenue_growth(info, finnhub_data)
+            scores['profitability'] = self._score_profitability(info, finnhub_data)
+            scores['industry_tailwinds'] = self._score_industry_tailwinds(symbol, info, finnhub_data)
+            scores['execution'] = self._score_execution(symbol, info)
             
             # Calculate totals
             total_score = sum(scores.values())
@@ -61,14 +56,13 @@ class USStockScorer:
             
             # Add metrics
             scores['symbol'] = symbol
-            scores['company_name'] = profile.get('name', symbol)
-            scores['exchange'] = profile.get('exchange', 'UNKNOWN')
-            scores['sector'] = profile.get('sector', '')
-            scores['industry'] = profile.get('industry', '')
-            scores['current_price'] = price_info.get('current_price', 0)
-            scores['market_cap'] = price_info.get('market_cap', 0)
-            scores['pe_ratio'] = metrics.get('pe', 0) if metrics else 0
-            scores['price_to_sales'] = metrics.get('ps', 0) if metrics else 0
+            scores['company_name'] = info.get('longName', symbol)
+            scores['exchange'] = info.get('exchange', 'UNKNOWN')
+            scores['sector'] = info.get('sector', '')
+            scores['industry'] = info.get('industry', '')
+            scores['current_price'] = info.get('currentPrice', 0)
+            scores['market_cap'] = info.get('marketCap', 0)
+            scores['pe_ratio'] = info.get('trailingPE', 0)
             
             return scores
             
@@ -76,73 +70,55 @@ class USStockScorer:
             print(f"Error scoring {symbol}: {e}")
             return None
     
-    def _get_company_profile(self, symbol):
-        """Get company profile from Finnhub"""
+    def _get_finnhub_data(self, symbol):
+        """Try to get Finnhub data, but don't fail if it doesn't work"""
         
         try:
+            if not self.finnhub_key:
+                return {}
+            
+            # Get profile
             url = f"{self.finnhub_base}/stock/profile2"
             params = {'symbol': symbol, 'token': self.finnhub_key}
+            resp = requests.get(url, params=params, timeout=3)
             
-            response = requests.get(url, params=params, timeout=5)
+            if resp.status_code == 200 and resp.json():
+                profile = resp.json()
+            else:
+                profile = {}
             
-            if response.status_code == 200:
-                data = response.json()
-                if data:
-                    return data
-            
-            return None
-        except Exception as e:
-            print(f"Error getting profile for {symbol}: {e}")
-            return None
-    
-    def _get_financial_metrics(self, symbol):
-        """Get financial metrics from Finnhub"""
-        
-        try:
+            # Get metrics
             url = f"{self.finnhub_base}/stock/metric"
-            params = {
-                'symbol': symbol,
-                'metric': 'all',
-                'token': self.finnhub_key
-            }
+            params = {'symbol': symbol, 'metric': 'all', 'token': self.finnhub_key}
+            resp = requests.get(url, params=params, timeout=3)
             
-            response = requests.get(url, params=params, timeout=5)
+            if resp.status_code == 200 and resp.json():
+                metrics = resp.json().get('metric', {})
+            else:
+                metrics = {}
             
-            if response.status_code == 200:
-                data = response.json()
-                if 'metric' in data:
-                    return data['metric']
-            
-            return None
-        except Exception as e:
-            print(f"Error getting metrics for {symbol}: {e}")
-            return None
-    
-    def _get_price_info(self, symbol):
-        """Get price info from yfinance"""
+            return {'profile': profile, 'metrics': metrics}
         
-        try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
-            
-            return {
-                'current_price': info.get('currentPrice', 0),
-                'market_cap': info.get('marketCap', 0),
-                'exchange': info.get('exchange', '')
-            }
-        except:
-            return None
+        except Exception as e:
+            # Silently return empty - we can score without Finnhub
+            return {}
     
-    def _score_gov_contracts(self, symbol, profile):
-        """Score 1: Government Contracts & Strategic Validation (0-3)"""
+    def _score_gov_contracts(self, symbol, info, finnhub_data):
+        """Score 1: Government Contracts (0-3) - PRIMARY SCORING"""
         
         score = 0
         
         try:
-            description = (profile.get('description', '') or '').lower()
-            name = (profile.get('name', '') or '').lower()
+            # Get description from both sources
+            description = (info.get('longBusinessSummary', '') or '').lower()
             
-            # ENHANCED: Defense keyword matching
+            if finnhub_data and 'profile' in finnhub_data:
+                profile = finnhub_data['profile']
+                description += ' ' + (profile.get('description', '') or '').lower()
+            
+            name = (info.get('longName', '') or '').lower()
+            
+            # DEFENSE KEYWORDS - Most important!
             gov_keywords = [
                 'pentagon', 'dod', 'nasa', 'government', 'defense',
                 'military', 'contract', 'federal', 'classified',
@@ -162,7 +138,7 @@ class USStockScorer:
                 score = 0.5
             
             # Boost if defense/aerospace sector
-            sector = (profile.get('sector', '') or '').lower()
+            sector = (info.get('sector', '') or '').lower()
             if 'defense' in sector or 'aerospace' in sector:
                 score = min(score + 0.5, 3.0)
             
@@ -170,23 +146,21 @@ class USStockScorer:
         except:
             return 0
     
-    def _score_national_security(self, symbol, profile):
-        """Score 2: National Security / Strategic Importance (0-3)"""
+    def _score_national_security(self, symbol, info, finnhub_data):
+        """Score 2: National Security (0-3)"""
         
         score = 0
         
         try:
-            industry = (profile.get('industry', '') or '').lower()
-            sector = (profile.get('sector', '') or '').lower()
-            description = (profile.get('description', '') or '').lower()
+            industry = (info.get('industry', '') or '').lower()
+            sector = (info.get('sector', '') or '').lower()
+            description = (info.get('longBusinessSummary', '') or '').lower()
             
-            # CRITICAL defense industries
             defense_industries = [
                 'defense', 'aerospace', 'security', 'cybersecurity',
                 'drone', 'satellite', 'intelligence', 'military',
                 'space technology', 'defense contractors', 'aerospace & defense',
-                'guided missiles', 'aircraft', 'weapons systems',
-                'space exploration'
+                'guided missiles', 'aircraft', 'weapons systems'
             ]
             
             if any(ind in industry for ind in defense_industries):
@@ -204,90 +178,128 @@ class USStockScorer:
         except:
             return 0
     
-    def _score_backlog(self, metrics, profile):
-        """Score 3: Large Backlogs = Revenue Visibility (0-2)"""
+    def _score_backlog(self, info, finnhub_data):
+        """Score 3: Large Backlogs (0-2)"""
         
         score = 0
         
         try:
-            if not metrics:
-                return 0
+            # Try Finnhub metrics first
+            if finnhub_data and 'metrics' in finnhub_data:
+                metrics = finnhub_data['metrics']
+                gross_margin = metrics.get('grossMargin', 0)
+                
+                if gross_margin and gross_margin > 0:
+                    if gross_margin > 0.45:
+                        score = 2.0
+                    elif gross_margin > 0.35:
+                        score = 1.5
+                    elif gross_margin > 0.25:
+                        score = 1.0
             
-            # Get gross margin from Finnhub metrics
-            gross_margin = metrics.get('grossMargin', 0)
-            
-            if gross_margin and gross_margin > 0:
-                if gross_margin > 0.45:
-                    score = 2.0
-                elif gross_margin > 0.35:
-                    score = 1.5
-                elif gross_margin > 0.25:
-                    score = 1.0
+            # Fallback to yfinance if no Finnhub data
+            if score == 0:
+                gross_profit = info.get('grossProfits', 0)
+                total_revenue = info.get('totalRevenue', 0)
+                
+                if gross_profit and total_revenue and total_revenue > 0:
+                    gross_margin = gross_profit / total_revenue
+                    if gross_margin > 0.45:
+                        score = 2.0
+                    elif gross_margin > 0.35:
+                        score = 1.5
+                    elif gross_margin > 0.25:
+                        score = 1.0
             
             return score
         except:
             return 0
     
-    def _score_revenue_growth(self, metrics):
+    def _score_revenue_growth(self, info, finnhub_data):
         """Score 4: Revenue Growth (0-2)"""
         
         score = 0
         
         try:
-            if not metrics:
-                return 0
+            # Try Finnhub first
+            if finnhub_data and 'metrics' in finnhub_data:
+                metrics = finnhub_data['metrics']
+                revenue_growth = metrics.get('revenueGrowth', 0)
+                
+                if revenue_growth and revenue_growth > 0:
+                    if revenue_growth >= 0.25:
+                        score = 2.0
+                    elif revenue_growth >= 0.15:
+                        score = 1.5
+                    elif revenue_growth >= 0.05:
+                        score = 1.0
             
-            # Get revenue growth from Finnhub
-            revenue_growth = metrics.get('revenueGrowth', 0)
-            
-            if revenue_growth and revenue_growth > 0:
-                if revenue_growth >= 0.25:
+            # Fallback to yfinance
+            if score == 0:
+                revenue_growth = info.get('revenueGrowth', 0)
+                
+                if revenue_growth and revenue_growth >= 0.25:
                     score = 2.0
-                elif revenue_growth >= 0.15:
+                elif revenue_growth and revenue_growth >= 0.15:
                     score = 1.5
-                elif revenue_growth >= 0.05:
+                elif revenue_growth and revenue_growth >= 0.05:
                     score = 1.0
             
             return score
         except:
             return 0
     
-    def _score_profitability(self, metrics):
-        """Score 5: Path to / Achieving Profitability (0-1.5)"""
+    def _score_profitability(self, info, finnhub_data):
+        """Score 5: Profitability (0-1.5)"""
         
         score = 0
         
         try:
-            if not metrics:
-                return 0
+            # Try Finnhub first
+            if finnhub_data and 'metrics' in finnhub_data:
+                metrics = finnhub_data['metrics']
+                net_margin = metrics.get('netMargin', 0)
+                
+                if net_margin and net_margin > 0:
+                    if net_margin > 0.12:
+                        score = 1.5
+                    elif net_margin > 0.08:
+                        score = 1.2
+                    elif net_margin > 0.03:
+                        score = 0.8
+                    elif net_margin > 0:
+                        score = 0.4
             
-            # Get net margin from Finnhub
-            net_margin = metrics.get('netMargin', 0)
-            
-            if net_margin and net_margin > 0:
-                if net_margin > 0.12:
-                    score = 1.5
-                elif net_margin > 0.08:
-                    score = 1.2
-                elif net_margin > 0.03:
-                    score = 0.8
-                elif net_margin > 0:
-                    score = 0.4
+            # Fallback to yfinance
+            if score == 0:
+                net_income = info.get('netIncomeToCommon', 0)
+                total_revenue = info.get('totalRevenue', 0)
+                
+                if net_income and total_revenue and total_revenue > 0:
+                    net_margin = net_income / total_revenue
+                    
+                    if net_margin > 0.12:
+                        score = 1.5
+                    elif net_margin > 0.08:
+                        score = 1.2
+                    elif net_margin > 0.03:
+                        score = 0.8
+                    elif net_margin > 0:
+                        score = 0.4
             
             return score
         except:
             return 0
     
-    def _score_industry_tailwinds(self, symbol, profile):
+    def _score_industry_tailwinds(self, symbol, info, finnhub_data):
         """Score 6: Industry Tailwinds (0-1.5)"""
         
         score = 0
         
         try:
-            industry = (profile.get('industry', '') or '').lower()
-            description = (profile.get('description', '') or '').lower()
+            industry = (info.get('industry', '') or '').lower()
+            description = (info.get('longBusinessSummary', '') or '').lower()
             
-            # DEFENSE TAILWINDS
             defense_tailwinds = [
                 'ai', 'artificial intelligence', 'machine learning',
                 'defense', 'cybersecurity', 'cyber threat',
@@ -309,7 +321,7 @@ class USStockScorer:
         except:
             return 0
     
-    def _score_execution(self, symbol):
+    def _score_execution(self, symbol, info):
         """Score 7: Execution Excellence (0-1.0)"""
         
         score = 0
